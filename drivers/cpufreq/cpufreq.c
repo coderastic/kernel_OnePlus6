@@ -2845,3 +2845,193 @@ static int __init cpufreq_core_init(void)
 	return 0;
 }
 core_initcall(cpufreq_core_init);
+
+static int get_c0_available_cpufreq(struct cpufreq_policy *policy)
+{
+       int max_cpufreq_index = -1, min_cpufreq_index = -1;
+       int max_index = -1;
+       int index_max = 0, index_min = 0;
+       struct cpufreq_frequency_table *table, *pos;
+
+       table = policy->freq_table;
+       if (!table) {
+               pr_err("cpufreq:Failed to get frequency table for CPU%u\n", 0);
+               return -EINVAL;
+       }
+
+       max_cpufreq_index = (unsigned int)pm_qos_request(PM_QOS_C0_CPUFREQ_MAX);
+       min_cpufreq_index = (unsigned int)pm_qos_request(PM_QOS_C0_CPUFREQ_MIN);
+       /* you can limit the min cpufreq*/
+       if (min_cpufreq_index > max_cpufreq_index)
+               max_cpufreq_index = min_cpufreq_index;
+
+       /* get the available cpufreq
+       * lock for the max available cpufreq
+       */
+       cpufreq_for_each_valid_entry(pos, table) {
+               max_index = pos - table;
+       }
+       if (max_cpufreq_index & MASK_CPUFREQ) {
+               index_max = MAX_CPUFREQ - max_cpufreq_index;
+               if (index_max > max_index)
+                       index_max = 0;
+               index_max = max_index - index_max;
+       } else {
+               if (max_cpufreq_index > max_index)
+                       index_max = max_index;
+       }
+       if (min_cpufreq_index & MASK_CPUFREQ) {
+               index_min = MAX_CPUFREQ - min_cpufreq_index;
+               if (index_min > max_index)
+                       index_min = 0;
+               index_min = max_index - index_min;
+       } else {
+               if (min_cpufreq_index > max_index)
+                       index_min = max_index;
+       }
+       c0_qos_request_value.max_cpufreq = table[index_max].frequency;
+       c0_qos_request_value.min_cpufreq = table[index_min].frequency;
+       pr_debug("::: m:%d, ii:%d-, mm:%d-", max_index, index_min, index_max);
+
+       return 0;
+}
+
+static int get_c1_available_cpufreq(struct cpufreq_policy *policy)
+{
+       int max_cpufreq_index = -1, min_cpufreq_index = -1;
+       int max_index = -1;
+       int index_max = 0, index_min = 0;
+       struct cpufreq_frequency_table *table, *pos;
+
+       table = policy->freq_table;
+       if (!table) {
+               pr_err("cpufreq: Failed to get frequency table for CPU\n");
+               return -EINVAL;
+       }
+
+       max_cpufreq_index = (unsigned int)pm_qos_request(PM_QOS_C1_CPUFREQ_MAX);
+       min_cpufreq_index = (unsigned int)pm_qos_request(PM_QOS_C1_CPUFREQ_MIN);
+       /* you can limit the min cpufreq*/
+       if (min_cpufreq_index > max_cpufreq_index)
+               max_cpufreq_index = min_cpufreq_index;
+
+       /* get the available cpufreq
+       * lock for the max available cpufreq
+       */
+       cpufreq_for_each_valid_entry(pos, table) {
+               max_index = pos - table -3;
+       }
+               /* add limits */
+       if (max_cpufreq_index & MASK_CPUFREQ) {
+               index_max = MAX_CPUFREQ - max_cpufreq_index;
+               if (index_max > max_index)
+                       index_max = 0;
+               index_max = max_index - index_max;
+       } else {
+               if (max_cpufreq_index > max_index)
+                       index_max = max_index;
+       }
+       if (min_cpufreq_index & MASK_CPUFREQ) {
+               index_min = MAX_CPUFREQ - min_cpufreq_index;
+               if (index_min > max_index)
+                       index_min = 0;
+               index_min = max_index - index_min;
+       } else {
+               if (min_cpufreq_index > max_index)
+                       index_min = max_index;
+       }
+       c1_qos_request_value.max_cpufreq = table[index_max].frequency;
+       c1_qos_request_value.min_cpufreq = table[index_min].frequency;
+       pr_debug("::: m:%d, ii:%d-, mm:%d-", max_index, index_min, index_max);
+
+       return 0;
+}
+
+static int c0_cpufreq_qos_handler(struct notifier_block *b,
+       unsigned long val, void *v)
+{
+       struct cpufreq_policy *policy;
+       int ret = -1;
+
+       policy = cpufreq_cpu_get(0);
+
+       if (!policy)
+               return NOTIFY_BAD;
+
+       if (!policy->governor) {
+                cpufreq_cpu_put(policy);
+                return NOTIFY_BAD;
+       }
+
+       if (strcmp(policy->governor->name, "schedutil") || strcmp(policy->governor->name, "blu_schedutil")) {
+               cpufreq_cpu_put(policy);
+               return NOTIFY_OK;
+       }
+
+       ret = get_c0_available_cpufreq(policy);
+       if (ret) {
+               cpufreq_cpu_put(policy);
+               return NOTIFY_BAD;
+       }
+
+       __cpufreq_driver_target(policy,
+               c0_qos_request_value.min_cpufreq, CPUFREQ_RELATION_H);
+
+       cpufreq_cpu_put(policy);
+       return NOTIFY_OK;
+}
+
+static struct notifier_block c0_cpufreq_qos_notifier = {
+       .notifier_call = c0_cpufreq_qos_handler,
+};
+
+static int c1_cpufreq_qos_handler(struct notifier_block *b,
+       unsigned long val, void *v)
+{
+       struct cpufreq_policy *policy;
+       int ret = -1;
+
+       policy = cpufreq_cpu_get(cluster1_first_cpu);
+
+       if (!policy)
+               return NOTIFY_BAD;
+
+       if (!policy->governor) {
+               cpufreq_cpu_put(policy);
+               return NOTIFY_BAD;
+       }
+
+       if (strcmp(policy->governor->name, "schedutil") || strcmp(policy->governor->name, "blu_schedutil")) {
+               cpufreq_cpu_put(policy);
+               return NOTIFY_OK;
+       }
+
+       ret = get_c1_available_cpufreq(policy);
+       if (ret) {
+                cpufreq_cpu_put(policy);
+                return NOTIFY_BAD;
+       }
+
+        c1_cpufreq_update_flag = true;
+       __cpufreq_driver_target(policy,
+               c1_qos_request_value.min_cpufreq, CPUFREQ_RELATION_H);
+       cpufreq_cpu_put(policy);
+
+       return NOTIFY_OK;
+}
+
+static struct notifier_block c1_cpufreq_qos_notifier = {
+       .notifier_call = c1_cpufreq_qos_handler,
+};
+
+static int __init pm_qos_notifier_init(void)
+{
+        /* add cpufreq qos notify */
+        pm_qos_add_notifier(PM_QOS_C0_CPUFREQ_MAX, &c0_cpufreq_qos_notifier);
+        pm_qos_add_notifier(PM_QOS_C0_CPUFREQ_MIN, &c0_cpufreq_qos_notifier);
+        pm_qos_add_notifier(PM_QOS_C1_CPUFREQ_MAX, &c1_cpufreq_qos_notifier);
+        pm_qos_add_notifier(PM_QOS_C1_CPUFREQ_MIN, &c1_cpufreq_qos_notifier);
+       return 0;
+}
+subsys_initcall(pm_qos_notifier_init);
+>>>>>>> e330e3217d21... cpufreq: blu_schedutil: add some compat oem bits
