@@ -3034,4 +3034,3 @@ static int __init pm_qos_notifier_init(void)
        return 0;
 }
 subsys_initcall(pm_qos_notifier_init);
->>>>>>> e330e3217d21... cpufreq: blu_schedutil: add some compat oem bits
